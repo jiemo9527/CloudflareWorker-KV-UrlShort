@@ -1,3 +1,6 @@
+Redo:去除turnstile（已使用cf全局waf托管），验证最小字符为1，自定义404页面，安全路径
+
+---
 # 简约短链接生成器
 
 一个基于 Cloudflare Workers 和 KV 存储的短链接生成服务。
