@@ -1,6 +1,3 @@
-// Cloudflare Worker
-// This worker uses Cloudflare KV for storing URL data
-
 addEventListener("fetch", (event) => {
   event.respondWith(handleRequest(event.request));
 });
@@ -10,34 +7,43 @@ async function handleRequest(request) {
     const url = new URL(request.url);
     const { pathname } = url;
 
-    // Handle favicon request
     if (pathname === '/favicon.ico') {
       return new Response(null, { status: 204 });
     }
 
-    if (pathname === "/") {
-      // Serve the frontend
+    if (pathname === "/安全路径") {
+      // 处理安全路径的请求，返回首页内容
       return serveFrontend();
     }
 
+
+    if (pathname === "/") {
+      // 对于根路径返回自定义404页面内容
+      return fetchCustom404();
+    }
+
     if (pathname.startsWith("/api")) {
-      // Handle API requests
       return handleAPIRequest(request);
     }
 
-    // Redirect for short URLs
     return handleRedirect(pathname);
   } catch (error) {
     console.error('Error handling request:', error);
     return new Response('服务器内部错误', { status: 500 });
   }
 }
+async function fetchCustom404() {
+  const response = await fetch("https://xxxxx.app/404");
+  const custom404HTML = await response.text();
+  return new Response(custom404HTML, {
+    headers: { 
+      "Content-Type": "text/html",
+      "Cache-Control": "no-cache, no-store, must-revalidate"
+    },
+  });
+}
 
 async function serveFrontend() {
-  const turnstileScript = TURNSTILE_SITE_KEY ? 
-    '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : 
-    '';
-  
   const frontendHTML = `<!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -46,7 +52,6 @@ async function serveFrontend() {
     <title>短链接生成器</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔗</text></svg>">
-    ${turnstileScript}
 </head>
 <body class="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
     <main class="container mx-auto p-6 max-w-2xl">
@@ -132,12 +137,6 @@ async function serveFrontend() {
                     </div>
                 </div>
                 
-                <div class="flex justify-center">
-                    ${TURNSTILE_SITE_KEY ? 
-                        '<div class="cf-turnstile" data-sitekey="' + TURNSTILE_SITE_KEY + '"></div>' : 
-                        ''}
-                </div>
-                
                 <button type="submit" 
                     class="w-full bg-gradient-to-r from-blue-500 to-indigo-600 text-white py-3 px-6 rounded-lg font-medium hover:from-blue-600 hover:to-indigo-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transform hover:-translate-y-0.5 transition duration-200">
                     生成短链接
@@ -152,23 +151,9 @@ async function serveFrontend() {
     document.getElementById('shorten-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       
-      let token;
-      try {
-        token = turnstile.getResponse();
-        if (!token) {
-          document.getElementById('result').innerHTML = \`<div class="p-4 bg-red-50 rounded-lg"><p class="text-red-800">请完成人机验证</p></div>\`;
-          return;
-        }
-      } catch (error) {
-        console.error('Turnstile error:', error);
-        document.getElementById('result').innerHTML = \`<div class="p-4 bg-red-50 rounded-lg"><p class="text-red-800">人机验证加载失败，请刷新页面重试</p></div>\`;
-        return;
-      }
-      
       const submitButton = e.target.querySelector('button[type="submit"]');
       const resultDiv = document.getElementById('result');
       
-      // 禁用提交按钮并显示加载状态
       submitButton.disabled = true;
       submitButton.textContent = '生成中...';
       resultDiv.innerHTML = '';
@@ -203,8 +188,7 @@ async function serveFrontend() {
             slug: document.getElementById('slug').value,
             expiry: expiryDate,
             password: document.getElementById('password').value,
-            maxVisits: document.getElementById('maxVisits').value,
-            token: token
+            maxVisits: document.getElementById('maxVisits').value
         };
         
         const response = await fetch('/api/shorten', {
@@ -239,7 +223,6 @@ async function serveFrontend() {
               <p class="text-red-800">\${data.error}</p>
             </div>
           \`;
-          turnstile.reset();
         }
       } catch (error) {
         resultDiv.innerHTML = \`
@@ -247,10 +230,8 @@ async function serveFrontend() {
             <p class="text-red-800">生成短链接时发生错误，请重试</p>
           </div>
         \`;
-        turnstile.reset();
       }
       
-      // 恢复提交按钮状态
       submitButton.disabled = false;
       submitButton.textContent = '生成短链接';
     });
@@ -309,7 +290,7 @@ async function handleAPIRequest(request) {
         });
       }
 
-      const { url, slug, expiry, password, maxVisits, token } = await request.json();
+      const { url, slug, expiry, password, maxVisits } = await request.json();
       if (!url) {
         return new Response(JSON.stringify({ error: "请输入链接地址" }), {
           status: 400,
@@ -317,7 +298,6 @@ async function handleAPIRequest(request) {
         });
       }
 
-      // Validate URL
       try {
         new URL(url);
       } catch {
@@ -327,7 +307,6 @@ async function handleAPIRequest(request) {
         });
       }
 
-      // 添加最大访问次数验证
       if (maxVisits && (parseInt(maxVisits) <= 0 || isNaN(parseInt(maxVisits)))) {
         return new Response(JSON.stringify({ error: "最大访问次数必须大于0" }), {
           status: 400,
@@ -335,7 +314,6 @@ async function handleAPIRequest(request) {
         });
       }
 
-      // 添加自定义有效期验证
       if (expiry) {
         const expiryDate = new Date(expiry);
         const now = new Date();
@@ -347,18 +325,15 @@ async function handleAPIRequest(request) {
         }
       }
 
-      // 移除URL检查代码，直接生成新的短链接
       const shortSlug = slug || generateSlug();
       
-      // 添加自定义短链接长度验证
-      if (slug && slug.length < 3) {
-        return new Response(JSON.stringify({ error: "自定义链接至少需要3个字符" }), {
+      if (slug && slug.length < 1) {
+        return new Response(JSON.stringify({ error: "自定义链接至少需要1个字符" }), {
           status: 400,
           headers: { "Content-Type": "application/json" },
         });
       }
 
-      // Validate slug format
       if (!/^[a-zA-Z0-9-_]+$/.test(shortSlug)) {
         return new Response(JSON.stringify({ error: "自定义链接格式无效，只能使用字母、数字、横线和下划线" }), {
           status: 400,
@@ -406,32 +381,18 @@ async function handleAPIRequest(request) {
       const record = await URL_SHORT_KV.get(slug);
       
       if (!record) {
-        return new Response(JSON.stringify({ error: "链接不存在" }), {
-          status: 404,
-          headers: { "Content-Type": "application/json" }
+        const response = await fetch("https://xxx.app/404");
+        const custom404HTML = await response.text();
+        return new Response(custom404HTML, {
+          headers: { 
+            "Content-Type": "text/html",
+            "Cache-Control": "no-cache, no-store, must-revalidate"
+          },
         });
       }
 
       const { password: correctPassword, url, maxVisits, visits = 0 } = JSON.parse(record);
-      const { password: inputPassword, token } = await request.json();
-
-      // 验证 Turnstile token
-      if (TURNSTILE_SITE_KEY && TURNSTILE_SECRET) {
-        if (!token) {
-          return new Response(JSON.stringify({ error: "请完成人机验证" }), {
-            status: 400,
-            headers: { "Content-Type": "application/json" },
-          });
-        }
-        
-        const tokenValidation = await validateTurnstileToken(token);
-        if (!tokenValidation.success) {
-          return new Response(JSON.stringify({ error: "人机验证失败" }), {
-            status: 400,
-            headers: { "Content-Type": "application/json" },
-          });
-        }
-      }
+      const { password: inputPassword } = await request.json();
 
       if (inputPassword === correctPassword) {
         if (maxVisits) {
@@ -477,9 +438,13 @@ async function handleRedirect(pathname) {
     const record = await URL_SHORT_KV.get(slug);
 
     if (!record) {
-      return new Response("链接不存在", { 
-        status: 404,
-        headers: { "Content-Type": "text/plain; charset=utf-8" }
+      const response = await fetch("https://xxxx.app/404");
+      const custom404HTML = await response.text();
+      return new Response(custom404HTML, {
+        headers: { 
+          "Content-Type": "text/html",
+          "Cache-Control": "no-cache, no-store, must-revalidate"
+        },
       });
     }
 
@@ -502,17 +467,12 @@ async function handleRedirect(pathname) {
       });
     }
 
-    // 只在没有密码保护时更新访问次数
     if (maxVisits && !password) {
       data.visits = visits + 1;
       await URL_SHORT_KV.put(slug, JSON.stringify(data));
     }
 
     if (password) {
-      const turnstileScript = TURNSTILE_SITE_KEY ? 
-        '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : 
-        '';
-      
       const frontendHTML = `<!DOCTYPE html>
       <html lang="zh">
       <head>
@@ -521,7 +481,6 @@ async function handleRedirect(pathname) {
       <title>密码保护链接</title>
       <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
       <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔒</text></svg>">
-      ${turnstileScript}
       </head>
       <body class="bg-gray-100">
         <main class="container mx-auto p-4 max-w-md min-h-screen flex items-center justify-center">
@@ -531,11 +490,6 @@ async function handleRedirect(pathname) {
               <div>
                 <label for="password" class="block text-sm font-medium text-gray-700 mb-1">请输入访问码：</label>
                 <input id="password" type="password" class="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500" required>
-              </div>
-              <div class="flex justify-center">
-                ${TURNSTILE_SITE_KEY ? 
-                    '<div class="cf-turnstile" data-sitekey="' + TURNSTILE_SITE_KEY + '"></div>' : 
-                    ''}
               </div>
               <button type="submit" class="w-full bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
                 访问链接
@@ -555,12 +509,6 @@ async function handleRedirect(pathname) {
             submitButton.textContent = '验证中...';
             errorDiv.textContent = '';
             
-            const token = TURNSTILE_SITE_KEY ? turnstile.getResponse() : null;
-            if (TURNSTILE_SITE_KEY && !token) {
-              errorDiv.textContent = "请完成人机验证";
-              return;
-            }
-            
             try {
               const response = await fetch('/api/verify/${slug}', {
                 method: 'POST',
@@ -568,8 +516,7 @@ async function handleRedirect(pathname) {
                   'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ 
-                  password: inputPassword,
-                  token: token
+                  password: inputPassword
                 })
               });
               
@@ -579,13 +526,9 @@ async function handleRedirect(pathname) {
                 window.location.href = data.url;
               } else {
                 errorDiv.textContent = "密码错误";
-                // 重置 Turnstile
-                turnstile.reset();
               }
             } catch (error) {
               errorDiv.textContent = "发生错误，请重试";
-              // 发生错误时也重置 Turnstile
-              turnstile.reset();
             } finally {
               submitButton.disabled = false;
               submitButton.textContent = '访问链接';
@@ -616,33 +559,4 @@ async function handleRedirect(pathname) {
 function generateSlug(length = 6) {
   const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   return Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-}
-
-function onloadTurnstileCallback() {
-  console.log('Turnstile loaded successfully');
-}
-
-async function validateTurnstileToken(token) {
-  try {
-    const formData = new FormData();
-    formData.append('secret', TURNSTILE_SECRET);
-    formData.append('response', token);
-
-    const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-      method: 'POST',
-      body: formData
-    });
-
-    const data = await response.json();
-    return { 
-      success: data.success,
-      error: data['error-codes']
-    };
-  } catch (error) {
-    console.error('Turnstile validation error:', error);
-    return { 
-      success: false,
-      error: ['验证服务器错误']
-    };
-  }
 }
